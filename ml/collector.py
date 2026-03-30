@@ -1,8 +1,11 @@
+import os
 import psutil
 import time
 import csv
 
-with open("data.csv", "w", newline="") as f:
+data_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "data.csv")
+
+with open(data_path, "w", newline="") as f:
     writer = csv.writer(f)
     writer.writerow(["cpu", "memory", "processes", "disk", "label"])
 

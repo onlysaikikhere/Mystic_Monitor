@@ -19,14 +19,14 @@ warnings.filterwarnings("ignore", category=UserWarning)
 config = configparser.ConfigParser()
 config['Daemon'] = {
     'poll_interval_seconds': '5',
-    'model_path': os.path.join(os.path.dirname(os.path.abspath(__file__)), "model.pkl"),
+    'model_path': os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "model.pkl"),
     'socket_path': '/tmp/mystic.sock'
 }
 config['ActiveMitigation'] = {
     'enable_throttling': 'true',
     'throttle_cpu_threshold': '40.0',
     'enable_reaper': 'true',
-    'reaper_cpu_threshold': '85.0',
+    'reaper_cpu_threshold': '95.0',
     'protected_processes': 'systemd,sshd,bash,mystic_top,tmux,python3,init',
     'audit_log_path': '/var/log/mystic-anomalies.log'
 }
@@ -55,6 +55,7 @@ app_state = {
     "metrics": {}
 }
 state_lock = threading.Lock()
+reaper_tracking = {}
 
 class MysticSocketHandler(socketserver.StreamRequestHandler):
     def handle(self):
@@ -98,15 +99,37 @@ def mitigate_threat(cpu_percent, memory_percent):
             return f"WHITELISTED: {name} (Safe)"
 
     try:
-        # 1. Auto-Reaper (Over 85%)
-        if config.getboolean('ActiveMitigation', 'enable_reaper') and proc_cpu > config.getfloat('ActiveMitigation', 'reaper_cpu_threshold'):
-            os.kill(pid, signal.SIGKILL)
-            action_msg = f"KILLED (SIGKILL) '{name}' PID {pid} (CPU: {proc_cpu}%)"
-            logging.critical(action_msg)
-            return action_msg
-            
+        reaper_threshold = config.getfloat('ActiveMitigation', 'reaper_cpu_threshold')
+        
+        # Cleanup old tracking entries
+        current_pids = {p.info['pid']: p.info['cpu_percent'] or 0.0 for p in procs}
+        for t_pid in list(reaper_tracking.keys()):
+            if t_pid not in current_pids or current_pids[t_pid] <= reaper_threshold:
+                del reaper_tracking[t_pid]
+
+        # 1. Auto-Reaper (Over threshold)
+        if config.getboolean('ActiveMitigation', 'enable_reaper') and proc_cpu > reaper_threshold:
+            if pid not in reaper_tracking:
+                reaper_tracking[pid] = time.time()
+                
+            if time.time() - reaper_tracking[pid] >= 15:
+                os.kill(pid, signal.SIGKILL)
+                action_msg = f"KILLED (SIGKILL) '{name}' PID {pid} (CPU: {proc_cpu}%) after 15s"
+                logging.critical(action_msg)
+                if pid in reaper_tracking:
+                    del reaper_tracking[pid]
+                return action_msg
+            else:
+                remaining = int(15 - (time.time() - reaper_tracking[pid]))
+                action_msg = f"GRACE PENDING: '{name}' {remaining}s until SIGKILL"
+                
+                # Apply throttle during grace period if enabled
+                if config.getboolean('ActiveMitigation', 'enable_throttling'):
+                    psutil.Process(pid).nice(19)
+                return action_msg
+                
         # 2. Dynamic OS Scheduler Throttle (Over 40%)
-        elif config.getboolean('ActiveMitigation', 'enable_throttling') and proc_cpu > config.getfloat('ActiveMitigation', 'throttle_cpu_threshold'):
+        if config.getboolean('ActiveMitigation', 'enable_throttling') and proc_cpu > config.getfloat('ActiveMitigation', 'throttle_cpu_threshold'):
             psutil.Process(pid).nice(19) # Push to absolute lowest OS priority scheduling queue
             action_msg = f"THROTTLED (renice 19) '{name}' PID {pid} (CPU: {proc_cpu}%)"
             logging.warning(action_msg)

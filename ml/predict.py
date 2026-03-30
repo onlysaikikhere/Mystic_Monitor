@@ -1,3 +1,4 @@
+import os
 import psutil
 import time
 import pickle
@@ -7,9 +8,10 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 try:
-    model = pickle.load(open("model.pkl", "rb"))
+    model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "model.pkl")
+    model = pickle.load(open(model_path, "rb"))
 except FileNotFoundError:
-    print("Error: model.pkl not found. Please run train.py first to train and save the model.")
+    print(f"Error: {model_path} not found. Please run train.py first to train and save the model.")
     exit(1)
 
 print("Starting performance degradation prediction monitoring...")

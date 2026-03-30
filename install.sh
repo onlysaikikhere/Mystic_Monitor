@@ -18,7 +18,7 @@ apt-get install -y python3-psutil python3-sklearn python3-pandas
 # 3. Setup OS Configuration File & Logs
 echo "[2/6] Installing OS configuration and Audit Logs..."
 if [ ! -f /etc/mystic-monitor.conf ]; then
-    cp mystic-monitor.conf /etc/mystic-monitor.conf
+    cp config/mystic-monitor.conf /etc/mystic-monitor.conf
     echo "  -> Created /etc/mystic-monitor.conf"
 else
     echo "  -> /etc/mystic-monitor.conf already exists, protecting admin configurations."
@@ -30,25 +30,25 @@ chmod 666 /var/log/mystic-anomalies.log
 # 4. Setup Background Daemon
 echo "[3/6] Setting up background daemon in /opt/mystic_monitor..."
 mkdir -p /opt/mystic_monitor
-cp mystic_daemon.py /opt/mystic_monitor/
-cp model.pkl /opt/mystic_monitor/
+cp daemon/mystic_daemon.py /opt/mystic_monitor/
+cp data/model.pkl /opt/mystic_monitor/
 chmod +x /opt/mystic_monitor/mystic_daemon.py
 
 # 5. Setup CLI Client (The 'top' interface)
 echo "[4/6] Installing global CLI tool 'mystic-top'..."
-cp mystic_top.py /usr/local/bin/mystic-top
+cp cli/mystic_top.py /usr/local/bin/mystic-top
 chmod +x /usr/local/bin/mystic-top
 
 # 6. Install standard Man Page
 echo "[5/6] Installing OS manual page..."
 mkdir -p /usr/local/share/man/man1
-gzip -c mystic-top.1 > /usr/local/share/man/man1/mystic-top.1.gz
+gzip -c cli/mystic-top.1 > /usr/local/share/man/man1/mystic-top.1.gz
 mandb -q || true
 
 # 7. Systemd Service Integration
 echo "[6/6] Integrating with systemd (Service Manager)..."
 if command -v systemctl >/dev/null 2>&1 && systemctl is-system-running >/dev/null 2>&1; then
-    cp mystic-monitor.service /etc/systemd/system/
+    cp config/mystic-monitor.service /etc/systemd/system/
     systemctl daemon-reload
     systemctl enable mystic-monitor.service
     systemctl restart mystic-monitor.service
@@ -58,7 +58,7 @@ else
     echo "WARNING: systemd is not active in this WSL environment."
     echo "The daemon has been installed but could not be started automatically."
     echo "To run the daemon manually in the background, you can use:"
-    echo "  sudo nohup /usr/bin/python3 /opt/mystic_daemon.py > /dev/null 2>&1 &"
+    echo "  sudo nohup /usr/bin/python3 /opt/mystic_monitor/mystic_daemon.py > /dev/null 2>&1 &"
     echo ""
 fi
 
