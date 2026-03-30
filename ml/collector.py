@@ -15,7 +15,7 @@ with open(data_path, "w", newline="") as f:
         processes = len(psutil.pids())
         disk = psutil.disk_io_counters().read_bytes
 
-        if cpu > 90 or memory > 85:
+        if cpu > 85 or memory > 85:
             label = 1
         else:
             label = 0
