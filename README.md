@@ -19,8 +19,8 @@ The core intelligence of the application runs as a continuous, headless Systemd 
 ### 2. The Active Mitigation Escalation Matrix
 The daemon isn't just an observer; it's an automated System Administrator. If the ML model warns of imminent degradation:
 1. **The Whitelist Check:** The daemon examines the highest CPU-consuming process against a strict `/etc/` whitelist (e.g., `sshd`, `systemd`). If the process is a critical system service, it is safely ignored.
-2. **OS Process Throttling (`renice`):** If a rogue script is causing moderate degradation (>40% CPU), the daemon dips into the Linux scheduler and applies a `+19` nice value, pushing the task to the absolute lowest CPU priority queue so standard web traffic can breathe freely.
-3. **The Auto-Reaper (`SIGKILL`):** If degradation reaches critical exhaustion (>85% CPU), the daemon bypasses the scheduler and fires a fatal `SIGKILL` directly via the OS to instantly destroy the OOM-threat.
+2. **The Auto-Reaper with 15-Second Grace Period (`SIGKILL`):** If degradation reaches critical exhaustion (e.g., >95% CPU), the daemon logs the threat and starts a 15-second countdown. During this grace period, it actively throttles the process (`renice 19`). If the process fails to stabilize below the threshold after 15 seconds, the daemon fires a fatal `SIGKILL` directly via the OS to instantly destroy the threat.
+3. **OS Process Throttling (`renice`):** If a rogue script is causing moderate degradation (e.g., >40% CPU) but hasn't reached critical exhaustion, the daemon dips into the Linux scheduler and applies a `+19` nice value, pushing the task to the absolute lowest CPU priority queue so standard web traffic can breathe freely.
 4. **Historical Logging:** Every mitigation action is permanently journaled with timestamps into `/var/log/mystic-anomalies.log`.
 
 ### 3. The Interactive Dashboard (`mystic_top.py`)
@@ -74,4 +74,4 @@ mystic-top
 ```bash
 stress --cpu 32
 ```
-*The Machine learning engine will immediately predict the massive incoming CPU spike, correctly identify the dummy payload, and physically execute an OS `SIGKILL` to save your server layout—logging the killshot cleanly across your `mystic-top` UI!*
+*The Machine learning engine will immediately predict the massive incoming CPU spike, correctly identify the dummy payload, and dynamically throttle the process while starting a 15-second grace period. If the load persists, it physically executes an OS `SIGKILL` to save your server layout—logging the countdown and final killshot cleanly across your `mystic-top` UI!*
