@@ -1,0 +1,30 @@
+.TH MYSTIC-TOP 1 "March 2026" "Mystic Monitor 1.0" "User Commands"
+.SH NAME
+mystic-top \- interactive process viewer with ML performance degradation prediction
+.SH SYNOPSIS
+.B mystic-top
+.SH DESCRIPTION
+.B mystic-top
+provides a dynamic real-time view of a running system, similar to traditional
+.IR top (1)
+or
+.IR htop (1).
+However, it connects to the mystic-monitor systemd daemon to provide intelligent, Machine Learning based predictions on potential system slowdowns based on process count, memory, cpu, and disk I/O metrics.
+
+It displays a curated list of system summary information, a prominent status banner predicting degradation, and a list of currently running processes managed by the Linux kernel.
+.SH INTERACTIVE COMMANDS
+.B mystic-top
+accepts single-key commands while running:
+.TP
+.B q
+Quit the program.
+.SH FILES
+.I /tmp/mystic_state.json
+.RS
+Temporary state file where the mystic-monitor background service continuously dumps the current system prediction.
+.RE
+.SH AUTHOR
+Mystic Monitor Team
+.SH SEE ALSO
+.IR top (1),
+.IR htop (1)

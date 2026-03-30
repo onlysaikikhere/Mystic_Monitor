@@ -1,0 +1,16 @@
+[Unit]
+Description=Mystic Monitor Background ML Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/mystic_monitor
+ExecStart=/usr/bin/python3 /opt/mystic_monitor/mystic_daemon.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
