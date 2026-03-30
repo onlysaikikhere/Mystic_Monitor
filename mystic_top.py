@@ -46,7 +46,7 @@ def draw_interface(stdscr):
     curses.init_pair(5, curses.COLOR_CYAN, -1)    # Keys / Info
 
     stdscr.nodelay(True) # Non-blocking input
-    stdscr.timeout(2000) # 2-second refresh rate
+    stdscr.timeout(500) # 500 ms refresh rate
 
     while True:
         try:
