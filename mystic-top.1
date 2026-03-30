@@ -19,9 +19,9 @@ accepts single-key commands while running:
 .B q
 Quit the program.
 .SH FILES
-.I /tmp/mystic_state.json
+.I /tmp/mystic.sock
 .RS
-Temporary state file where the mystic-monitor background service continuously dumps the current system prediction.
+A high-performance Unix Domain Socket where the mystic-monitor systemd background service serves continuous predictions in-memory to all connecting dashboard clients, avoiding disk I/O overhead.
 .RE
 .SH AUTHOR
 Mystic Monitor Team

@@ -1,46 +1,58 @@
 # Mystic Monitor
 
-**Mystic Monitor** is a hybrid Machine Learning & Operating Systems project. It predicts performance degradation on Linux/Ubuntu systems by analyzing real-time kernel metrics and broadcasting them via an interactive, native terminal dashboard.
+**Mystic Monitor** is a hybrid Machine Learning & Operating Systems project. It acts as an **Active Server Mitigation Engine**, predicting system performance degradation on Linux/Ubuntu via real-time kernel metrics and actively intervening (via `kill` and `renice` system calls) to prevent downtime. It natively broadcasts system state through an interactive, `htop`-style terminal dashboard.
 
-Unlike standard python scripts, Mystic Monitor is designed to be deeply integrated into the OS layer—utilizing Systemd daemons and global binary paths.
+Unlike standard standalone python scripts, Mystic Monitor is architected to integrate deeply into the OS layer—utilizing Systemd daemons, Unix Domain Sockets, `/etc/` configurations, and global executable paths.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ System Architecture
 
-The project is split into two distinct lifecycle phases:
+The project is split into three distinct subsystems that cleanly separate user-space offline tasks from kernel-space live monitoring.
 
-### 1. User-Space Training Pipeline
-Offline scripts used to gather system telemetry data and train the Random Forest inference engine.
-* `collector.py`: Gathers system metrics (`cpu`, `memory`, `processes`, `disk I/O`) into `data.csv`.
-* `train.py`: Uses `scikit-learn` to build `model.pkl` mapping metrics to performance degradation likelihoods.
+### 1. The Inference Engine (`mystic_daemon.py` & Systemd)
+The core intelligence of the application runs as a continuous, headless Systemd background service.
+* Constantly reads live OS stats (CPU, Memory, Process Counts, Disk I/O) via `psutil`.
+* Feeds data into a Pre-trained Scikit-Learn **Random Forest Classifier** (`model.pkl`) every 5 seconds.
+* Instead of inefficiently writing to the hard disk, it hosts a high-speed **Unix Domain Socket** (`/tmp/mystic.sock`) to immediately stream JSON payloads to any front-end client entirely in-memory.
 
-### 2. Kernel/System Inference Engine (The OS Integration)
-The live deployment architecture integrated directly into Ubuntu.
-* `mystic_daemon.py`: A `systemd` background service that constantly monitors the system kernel and runs `model.pkl` to compute system degradation probabilities.
-* `/tmp/mystic_state.json`: A shared IPC socket file where the daemon continuously dumps the machine learning state.
-* `mystic-top`: An interactive, Curses-based CLI dashboard that reads `psutil` load and interpolates it with the background daemon's live prediction status.
+### 2. The Active Mitigation Escalation Matrix
+The daemon isn't just an observer; it's an automated System Administrator. If the ML model warns of imminent degradation:
+1. **The Whitelist Check:** The daemon examines the highest CPU-consuming process against a strict `/etc/` whitelist (e.g., `sshd`, `systemd`). If the process is a critical system service, it is safely ignored.
+2. **OS Process Throttling (`renice`):** If a rogue script is causing moderate degradation (>40% CPU), the daemon dips into the Linux scheduler and applies a `+19` nice value, pushing the task to the absolute lowest CPU priority queue so standard web traffic can breathe freely.
+3. **The Auto-Reaper (`SIGKILL`):** If degradation reaches critical exhaustion (>85% CPU), the daemon bypasses the scheduler and fires a fatal `SIGKILL` directly via the OS to instantly destroy the OOM-threat.
+4. **Historical Logging:** Every mitigation action is permanently journaled with timestamps into `/var/log/mystic-anomalies.log`.
+
+### 3. The Interactive Dashboard (`mystic_top.py`)
+A fast, `curses`-based frontend UI explicitly designed to mimic legacy tools like `top` and `htop`.
+* Parses data dynamically from the `/tmp/mystic.sock` in real-time (500ms refresh rate).
+* Includes stunning, dynamically-colored ASCII progress bars for CPU, Mem, and Swap tracking.
+* Boldly highlights anomalous "Culprit" processes causing degradation dynamically across the UI grid.
+* Surfaces real-time "DAEMON LOG" events whenever the Auto-Reaper acts against the system.
+
+*(Note: The `collector.py` and `train.py` scripts act as the Offline Training Pipeline to generate custom `model.pkl` inference objects for your specific machine telemetry.)*
+
+---
+
+## ⚙️ OS Configuration (`/etc/mystic-monitor.conf`)
+
+By design, System Administrators should never have to hardcode Python scripts.
+All aggression thresholds, ML polling loop speeds, and Whitelisted binaries are strictly controlled inside a standard `.ini` configuration file that the installer securely places into `/etc/mystic-monitor.conf`.
 
 ---
 
 ## 🚀 Quick Start Guide
 
-### Step 1: Train the Engine (Optional, pre-trained model included)
-To build a custom model based on your system's telemetry:
-1. Run data collection until you have enough rows: `python3 collector.py`
-2. Run training: `python3 train.py`
-This generates your unique `model.pkl`.
-
-### Step 2: OS Installation
-Install the monitoring suite globally as root. This will install OS dependencies (`apt`), configure the daemon inside `/etc/systemd/`, copy the binaries into `/usr/local/bin/`, and install the `man` page.
+### Step 1: Global OS Installation
+Install the monitoring suite globally as root. This will install native OS dependencies (`apt`), configure the daemon inside `/etc/systemd/system/`, copy the binaries into `/usr/local/bin/`, and provision the `man` manual pages.
 
 ```bash
 chmod +x install.sh
 sudo ./install.sh
 ```
 
-### Step 3: Run the Dashboard
-The application is now integrated globally into your OS environment. From anywhere in your terminal, you can interact with it just like traditional Linux utilities.
+### Step 2: Use the Dashboard
+The application is now integrated universally into your OS environment. From anywhere in your terminal, interact with it like a native Linux utility.
 
 ```bash
 # Launch the ML-Enhanced TOP Interactive Dashboard
@@ -49,3 +61,17 @@ mystic-top
 # Open the User Manual pages
 man mystic-top
 ```
+
+### Step 3: Triggering the Auto-Reaper (Stress Test!)
+Want to see the Machine Learning engine actively defend your server live? Open two terminal windows side-by-side:
+
+**Terminal 1:**
+```bash
+mystic-top
+```
+
+**Terminal 2:**
+```bash
+stress --cpu 32
+```
+*The Machine learning engine will immediately predict the massive incoming CPU spike, correctly identify the dummy payload, and physically execute an OS `SIGKILL` to save your server layout—logging the killshot cleanly across your `mystic-top` UI!*

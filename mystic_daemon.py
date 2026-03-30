@@ -6,62 +6,156 @@ import warnings
 import json
 import os
 import sys
+import socket
+import socketserver
+import threading
+import configparser
+import logging
+import signal
 
-# Suppress warnings from scikit-learn
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# We will load the model from the directory where the daemon runs
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model.pkl")
-STATE_FILE = "/tmp/mystic_state.json"
-TMP_STATE_FILE = "/tmp/mystic_state.json.tmp"
+# Setup Configparser Native Fallbacks
+config = configparser.ConfigParser()
+config['Daemon'] = {
+    'poll_interval_seconds': '5',
+    'model_path': os.path.join(os.path.dirname(os.path.abspath(__file__)), "model.pkl"),
+    'socket_path': '/tmp/mystic.sock'
+}
+config['ActiveMitigation'] = {
+    'enable_throttling': 'true',
+    'throttle_cpu_threshold': '40.0',
+    'enable_reaper': 'true',
+    'reaper_cpu_threshold': '85.0',
+    'protected_processes': 'systemd,sshd,bash,mystic_top,tmux,python3,init',
+    'audit_log_path': '/var/log/mystic-anomalies.log'
+}
+
+# Pull from /etc/ over local
+config.read(['/etc/mystic-monitor.conf', 'mystic-monitor.conf'])
+
+POLL_INTERVAL = int(config['Daemon']['poll_interval_seconds'])
+MODEL_PATH = config['Daemon']['model_path']
+SOCKET_PATH = config['Daemon']['socket_path']
+LOG_PATH = config['ActiveMitigation']['audit_log_path']
+
+# Setup Historical Audit Logging
+logging.basicConfig(
+    filename=LOG_PATH,
+    level=logging.INFO,
+    format='%(asctime)s - [ActiveMitigation] - %(levelname)s - %(message)s'
+)
+
+# Thread-safe global state for the socket server to read from
+app_state = {
+    "status": "INITIALIZING...",
+    "prediction": -1,
+    "timestamp": 0,
+    "last_action": "None",
+    "metrics": {}
+}
+state_lock = threading.Lock()
+
+class MysticSocketHandler(socketserver.StreamRequestHandler):
+    def handle(self):
+        try:
+            with state_lock:
+                payload = json.dumps(app_state).encode('utf-8')
+            self.wfile.write(payload)
+        except Exception as e:
+            print(f"Socket Handler error: {e}", file=sys.stderr)
+
+def start_socket_server():
+    if os.path.exists(SOCKET_PATH):
+        try:
+            os.unlink(SOCKET_PATH)
+        except OSError:
+            pass
+    server = socketserver.UnixStreamServer(SOCKET_PATH, MysticSocketHandler)
+    os.chmod(SOCKET_PATH, 0o666)
+    server.serve_forever()
+
+def mitigate_threat(cpu_percent, memory_percent):
+    """
+    Identifies the top culprit process and applies the OS Escalation Matrix
+    (Ignore Whitelist -> Throttle(renice) -> Kill(SIGKILL)).
+    """
+    procs = list(psutil.process_iter(['pid', 'name', 'cpu_percent', 'cmdline']))
+    procs.sort(key=lambda x: x.info['cpu_percent'] or 0.0, reverse=True)
+    if not procs: return "None"
+    
+    culprit = procs[0].info
+    pid = culprit['pid']
+    name = str(culprit['name'] or 'unknown')
+    cmdline = ' '.join(culprit['cmdline'] or [])
+    proc_cpu = culprit['cpu_percent'] or 0.0
+    
+    # Check Whitelist Safety Protocol
+    whitelist = [wp.strip() for wp in config['ActiveMitigation']['protected_processes'].split(',')]
+    for wp in whitelist:
+        if wp and (wp in name or wp in cmdline):
+            logging.info(f"IGNORED: Process PID {pid} ({name}) is protected by OS whitelist.")
+            return f"WHITELISTED: {name} (Safe)"
+
+    try:
+        # 1. Auto-Reaper (Over 85%)
+        if config.getboolean('ActiveMitigation', 'enable_reaper') and proc_cpu > config.getfloat('ActiveMitigation', 'reaper_cpu_threshold'):
+            os.kill(pid, signal.SIGKILL)
+            action_msg = f"KILLED (SIGKILL) '{name}' PID {pid} (CPU: {proc_cpu}%)"
+            logging.critical(action_msg)
+            return action_msg
+            
+        # 2. Dynamic OS Scheduler Throttle (Over 40%)
+        elif config.getboolean('ActiveMitigation', 'enable_throttling') and proc_cpu > config.getfloat('ActiveMitigation', 'throttle_cpu_threshold'):
+            psutil.Process(pid).nice(19) # Push to absolute lowest OS priority scheduling queue
+            action_msg = f"THROTTLED (renice 19) '{name}' PID {pid} (CPU: {proc_cpu}%)"
+            logging.warning(action_msg)
+            return action_msg
+            
+        return "None"
+        
+    except Exception as e:
+        err_msg = f"MITIGATION FAILED against PID {pid}: {str(e)}"
+        logging.error(err_msg)
+        return err_msg
 
 def main():
-    print(f"Starting Mystic Monitor Daemon...")
+    print(f"Starting Mystic Monitor Active Mitigation Daemon...")
     try:
         with open(MODEL_PATH, "rb") as f:
             model = pickle.load(f)
-        print(f"Loaded model successfully from {MODEL_PATH}")
     except FileNotFoundError:
-        print(f"CRITICAL: {MODEL_PATH} not found. Daemon cannot start.", file=sys.stderr)
+        print(f"CRITICAL: {MODEL_PATH} not found.", file=sys.stderr)
         sys.exit(1)
+
+    threading.Thread(target=start_socket_server, daemon=True).start()
 
     while True:
         try:
-            # Collect metrics exactly as trained
             cpu = psutil.cpu_percent()
             memory = psutil.virtual_memory().percent
             processes = len(psutil.pids())
             disk = psutil.disk_io_counters().read_bytes
 
-            # Run prediction
             prediction = int(model.predict([[cpu, memory, processes, disk]])[0])
-
-            # Prepare state payload
-            state = {
-                "timestamp": time.time(),
-                "metrics": {
-                    "cpu": cpu,
-                    "memory": memory,
-                    "processes": processes,
-                    "disk_io": disk
-                },
-                "status": "WARNING: DEGRADATION EXPECTED" if prediction == 1 else "NORMAL",
-                "prediction": prediction
-            }
-
-            # Atomic write to state file so the client never reads partial data
-            with open(TMP_STATE_FILE, "w") as f:
-                json.dump(state, f)
-            os.rename(TMP_STATE_FILE, STATE_FILE)
-
-            # Optional: log degradation directly to OS journal (systemd handles stdout)
+            
+            # Fire Mitigation Subsystem if ML degrades
+            mitigation_taken = "None"
             if prediction == 1:
-                print(f"WARNING: Performance degradation detected: CPU: {cpu}%, Mem: {memory}%, Proc: {processes}")
+                mitigation_taken = mitigate_threat(cpu, memory)
+
+            with state_lock:
+                app_state["timestamp"] = time.time()
+                app_state["metrics"] = {"cpu": cpu, "memory": memory, "processes": processes, "disk_io": disk}
+                app_state["status"] = "EMERGENCY: DEGRADATION DETECTED" if prediction == 1 else "NORMAL"
+                app_state["prediction"] = prediction
+                if mitigation_taken != "None":
+                    app_state["last_action"] = mitigation_taken
 
         except Exception as e:
             print(f"ERROR calculating state: {e}", file=sys.stderr)
 
-        time.sleep(5)
+        time.sleep(POLL_INTERVAL)
 
 if __name__ == "__main__":
     main()
