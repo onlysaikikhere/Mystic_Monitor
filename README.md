@@ -51,6 +51,9 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
+> [!NOTE]
+> **Important Group Refresh:** The installer adds your user to the `mystic` system group to grant secure access to socket IPC and audit logs. After installation completes, you must **log out and log back in** (or run `newgrp mystic` in your current terminal) for the new group permissions to take effect before running `mystic-status`.
+
 ### Step 2: Use the Dashboard
 The application is now integrated universally into your OS environment. From anywhere in your terminal, interact with it like a native Linux utility.
 

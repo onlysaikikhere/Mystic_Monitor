@@ -12,6 +12,10 @@ import threading
 import configparser
 import logging
 import signal
+try:
+    import grp
+except ImportError:
+    grp = None
 
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -89,6 +93,12 @@ def start_socket_server():
             pass
     daemon_server = socketserver.UnixStreamServer(SOCKET_PATH, MysticSocketHandler)
     os.chmod(SOCKET_PATH, 0o660)
+    if grp:
+        try:
+            gid = grp.getgrnam('mystic').gr_gid
+            os.chown(SOCKET_PATH, -1, gid)
+        except Exception as e:
+            logging.warning(f"Failed to set socket group ownership: {e}")
     daemon_server.serve_forever()
 
 def cleanup_and_exit(signum, frame):
@@ -150,7 +160,18 @@ def mitigate_threat(cpu_percent, memory_percent):
                 del reaper_tracking[t_pid]
                 
         # Tracking logic
-        trip_tracking[pid] = trip_tracking.get(pid, 0) + 1
+        throttle_threshold = config.getfloat('ActiveMitigation', 'throttle_cpu_threshold')
+        is_violation = False
+        if mode == 'kill' and proc_cpu > reaper_threshold:
+            is_violation = True
+        elif mode in ['throttle', 'kill'] and proc_cpu > throttle_threshold:
+            is_violation = True
+
+        if is_violation:
+            trip_tracking[pid] = trip_tracking.get(pid, 0) + 1
+        else:
+            return "None (Thresholds not exceeded)"
+
         consecutive_trips = config.getint('ActiveMitigation', 'consecutive_trips')
         required_trips = consecutive_trips if mode == 'kill' else 1
 

@@ -30,6 +30,7 @@ RestrictSUIDSGID=true
 RestrictNamespaces=true
 LockPersonality=true
 MemoryDenyWriteExecute=true
+ReadWritePaths=/var/log/mystic-anomalies.log /run/mystic
 
 [Install]
 WantedBy=multi-user.target
