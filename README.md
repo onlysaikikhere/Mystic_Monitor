@@ -14,7 +14,7 @@ The project is split into three distinct subsystems that cleanly separate user-s
 The core intelligence of the application runs as a continuous, headless Systemd background service.
 * Constantly reads live OS stats (CPU, Memory, Process Counts, Disk I/O) via `psutil`.
 * Feeds data into a Pre-trained Scikit-Learn **Random Forest Classifier** (`model.pkl`) every 5 seconds.
-* Instead of inefficiently writing to the hard disk, it hosts a high-speed **Unix Domain Socket** (`/tmp/mystic.sock`) to immediately stream JSON payloads to any front-end client entirely in-memory.
+* Instead of inefficiently writing to the hard disk, it hosts a high-speed **Unix Domain Socket** (`/run/mystic/mystic.sock`) to immediately stream JSON payloads to any front-end client entirely in-memory.
 
 ### 2. The Active Mitigation Escalation Matrix
 The daemon isn't just an observer; it's an automated System Administrator. If the ML model warns of imminent degradation:
@@ -25,7 +25,7 @@ The daemon isn't just an observer; it's an automated System Administrator. If th
 
 ### 3. The Interactive Dashboard (`mystic_top.py`)
 A fast, `curses`-based frontend UI explicitly designed to mimic legacy tools like `top` and `htop`.
-* Parses data dynamically from the `/tmp/mystic.sock` in real-time (500ms refresh rate).
+* Parses data dynamically from the `/run/mystic/mystic.sock` in real-time (500ms refresh rate).
 * Includes stunning, dynamically-colored ASCII progress bars for CPU, Mem, and Swap tracking.
 * Boldly highlights anomalous "Culprit" processes causing degradation dynamically across the UI grid.
 * Surfaces real-time "DAEMON LOG" events whenever the Auto-Reaper acts against the system.
@@ -60,6 +60,9 @@ The application is now integrated universally into your OS environment. From any
 ```bash
 # Launch the ML-Enhanced TOP Interactive Dashboard
 mystic-top
+
+# Query the daemon health and config directly
+mystic-status
 
 # Open the User Manual pages
 man mystic-top
