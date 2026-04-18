@@ -10,7 +10,7 @@ import socket
 import configparser
 
 config = configparser.ConfigParser()
-config['Daemon'] = {'socket_path': '/tmp/mystic.sock'}
+config['Daemon'] = {'socket_path': '/run/mystic/mystic.sock'}
 config.read(['/etc/mystic-monitor.conf', 'mystic-monitor.conf'])
 SOCKET_PATH = config['Daemon']['socket_path']
 

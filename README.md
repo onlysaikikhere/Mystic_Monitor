@@ -75,3 +75,27 @@ mystic-top
 stress --cpu 32
 ```
 *The Machine learning engine will immediately predict the massive incoming CPU spike, correctly identify the dummy payload, and dynamically throttle the process while starting a 15-second grace period. If the load persists, it physically executes an OS `SIGKILL` to save your server layout—logging the countdown and final killshot cleanly across your `mystic-top` UI!*
+
+---
+
+## 🏛️ OS Integration & Design Rationale
+
+**Mystic Monitor** implements aggressive OS-level telemetry and enforcement policies. To guarantee security, stability, and adherence to POSIX standards, several key architectural constraints are enforced:
+
+### Systemd Lifecycle Management & Hardening
+The core background daemon is driven strictly by Systemd (`mystic-monitor.service`). 
+- **Sandboxing Knob Injection:** The background runner explicitly mandates isolation parameters (`ProtectSystem=full`, `PrivateTmp=true`, `MemoryDenyWriteExecute=true`, `NoNewPrivileges=true`). The daemon cannot natively tamper with core files outside its runtime boundaries.
+- **Clean Service Termination:** A graceful shutdown sequence guarantees `SIGTERM` signals will gracefully untangle system limits, unlink UNIX sockets, and synchronize log states before system processes die (`KillSignal=SIGTERM`, `TimeoutStopSec=10`). 
+- **Auto-Restart Policies:** Set to `Restart=on-failure`, systemd handles spontaneous worker failures instantly. 
+
+### Secure Inter-Process Communication
+Rather than leaning on unreliable HTTP ports or bloated Redis stacks, inference data is transmitted over localized Unix Domain Sockets (`/run/mystic/mystic.sock`). 
+- **Dynamic `/run/` Isolation:** Systemd natively manages temporary isolated filesystems (`RuntimeDirectory=mystic`). The socket is fully ephemeral to the current server lifecycle and evaporates upon failure, completely side-stepping file-lock issues.
+
+### Privilege Segmentation
+The engine operates as a deeply privileged daemon (`root`), while UI clients can scale across unprivileged users. 
+- **Group Isolation:** Access to the audit logs and IPC sockets is limited exclusively to the internal `mystic` system group ensuring that system telemetry cannot be poisoned by random user accounts. Local administrative accounts are silently bridged.
+
+### Configurable Enforcements
+Configuration schemas live exclusively in `/etc/mystic-monitor.conf` limiting changes strictly to System Administrators. 
+- Policies are highly modularized, utilizing configurable `monitor`, `throttle`, and `kill` mechanisms designed to avoid spontaneous production downtime by observing processes against `consecutive_trips` and `cooldown_seconds` rules locally handled by the inference state tracking mapping.

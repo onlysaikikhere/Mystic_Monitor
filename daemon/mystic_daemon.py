@@ -20,14 +20,17 @@ config = configparser.ConfigParser()
 config['Daemon'] = {
     'poll_interval_seconds': '5',
     'model_path': os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "model.pkl"),
-    'socket_path': '/tmp/mystic.sock'
+    'socket_path': '/run/mystic/mystic.sock'
 }
 config['ActiveMitigation'] = {
+    'mode': 'monitor',
+    'consecutive_trips': '3',
+    'cooldown_seconds': '30',
     'enable_throttling': 'true',
     'throttle_cpu_threshold': '40.0',
     'enable_reaper': 'true',
     'reaper_cpu_threshold': '95.0',
-    'protected_processes': 'systemd,sshd,bash,mystic_top,tmux,python3,init',
+    'protected_processes': 'systemd,sshd,bash,mystic_top,mystic_status,tmux,python3,init',
     'audit_log_path': '/var/log/mystic-anomalies.log'
 }
 
@@ -46,6 +49,13 @@ logging.basicConfig(
     format='%(asctime)s - [ActiveMitigation] - %(levelname)s - %(message)s'
 )
 
+# Added stdout logging handler for journald
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(console_formatter)
+logging.getLogger().addHandler(console_handler)
+
 # Thread-safe global state for the socket server to read from
 app_state = {
     "status": "INITIALIZING...",
@@ -56,6 +66,10 @@ app_state = {
 }
 state_lock = threading.Lock()
 reaper_tracking = {}
+trip_tracking = {}
+cooldown_tracking = {}
+shutdown_event = threading.Event()
+daemon_server = None
 
 class MysticSocketHandler(socketserver.StreamRequestHandler):
     def handle(self):
@@ -64,17 +78,33 @@ class MysticSocketHandler(socketserver.StreamRequestHandler):
                 payload = json.dumps(app_state).encode('utf-8')
             self.wfile.write(payload)
         except Exception as e:
-            print(f"Socket Handler error: {e}", file=sys.stderr)
+            logging.error(f"Socket Handler error: {e}")
 
 def start_socket_server():
+    global daemon_server
     if os.path.exists(SOCKET_PATH):
         try:
             os.unlink(SOCKET_PATH)
         except OSError:
             pass
-    server = socketserver.UnixStreamServer(SOCKET_PATH, MysticSocketHandler)
-    os.chmod(SOCKET_PATH, 0o666)
-    server.serve_forever()
+    daemon_server = socketserver.UnixStreamServer(SOCKET_PATH, MysticSocketHandler)
+    os.chmod(SOCKET_PATH, 0o660)
+    daemon_server.serve_forever()
+
+def cleanup_and_exit(signum, frame):
+    logging.info(f"Received signal {signum}. Initiating clean shutdown...")
+    shutdown_event.set()
+    if daemon_server:
+        daemon_server.shutdown()
+        daemon_server.server_close()
+    if os.path.exists(SOCKET_PATH):
+        try:
+            os.unlink(SOCKET_PATH)
+            logging.info("Socket unlinked.")
+        except OSError:
+            pass
+    logging.info("Shutdown complete.")
+    sys.exit(0)
 
 def mitigate_threat(cpu_percent, memory_percent):
     """
@@ -98,7 +128,19 @@ def mitigate_threat(cpu_percent, memory_percent):
             logging.info(f"IGNORED: Process PID {pid} ({name}) is protected by OS whitelist.")
             return f"WHITELISTED: {name} (Safe)"
 
+    mode = config['ActiveMitigation']['mode']
+    if mode == 'monitor':
+        action_msg = f"MONITOR: Detected anomaly from PID {pid} ({name}) at {proc_cpu}% CPU."
+        logging.info(action_msg)
+        return action_msg
+
     try:
+        if pid in cooldown_tracking:
+            if time.time() - cooldown_tracking[pid] < config.getfloat('ActiveMitigation', 'cooldown_seconds'):
+                return "None (Cooldown)"
+            else:
+                del cooldown_tracking[pid]
+
         reaper_threshold = config.getfloat('ActiveMitigation', 'reaper_cpu_threshold')
         
         # Cleanup old tracking entries
@@ -106,18 +148,28 @@ def mitigate_threat(cpu_percent, memory_percent):
         for t_pid in list(reaper_tracking.keys()):
             if t_pid not in current_pids or current_pids[t_pid] <= reaper_threshold:
                 del reaper_tracking[t_pid]
+                
+        # Tracking logic
+        trip_tracking[pid] = trip_tracking.get(pid, 0) + 1
+        consecutive_trips = config.getint('ActiveMitigation', 'consecutive_trips')
+        required_trips = consecutive_trips if mode == 'kill' else 1
+
+        if trip_tracking[pid] < required_trips:
+            return f"TRACKING: {name} (PID {pid}) violation {trip_tracking[pid]}/{required_trips}"
 
         # 1. Auto-Reaper (Over threshold)
-        if config.getboolean('ActiveMitigation', 'enable_reaper') and proc_cpu > reaper_threshold:
+        if mode == 'kill' and config.getboolean('ActiveMitigation', 'enable_reaper') and proc_cpu > reaper_threshold:
             if pid not in reaper_tracking:
                 reaper_tracking[pid] = time.time()
                 
             if time.time() - reaper_tracking[pid] >= 15:
                 os.kill(pid, signal.SIGKILL)
+                cooldown_tracking[pid] = time.time()
                 action_msg = f"KILLED (SIGKILL) '{name}' PID {pid} (CPU: {proc_cpu}%) after 15s"
                 logging.critical(action_msg)
                 if pid in reaper_tracking:
                     del reaper_tracking[pid]
+                trip_tracking[pid] = 0
                 return action_msg
             else:
                 remaining = int(15 - (time.time() - reaper_tracking[pid]))
@@ -129,10 +181,12 @@ def mitigate_threat(cpu_percent, memory_percent):
                 return action_msg
                 
         # 2. Dynamic OS Scheduler Throttle (Over 40%)
-        if config.getboolean('ActiveMitigation', 'enable_throttling') and proc_cpu > config.getfloat('ActiveMitigation', 'throttle_cpu_threshold'):
+        if mode in ['throttle', 'kill'] and config.getboolean('ActiveMitigation', 'enable_throttling') and proc_cpu > config.getfloat('ActiveMitigation', 'throttle_cpu_threshold'):
             psutil.Process(pid).nice(19) # Push to absolute lowest OS priority scheduling queue
+            cooldown_tracking[pid] = time.time()
             action_msg = f"THROTTLED (renice 19) '{name}' PID {pid} (CPU: {proc_cpu}%)"
             logging.warning(action_msg)
+            trip_tracking[pid] = 0
             return action_msg
             
         return "None"
@@ -143,17 +197,24 @@ def mitigate_threat(cpu_percent, memory_percent):
         return err_msg
 
 def main():
-    print(f"Starting Mystic Monitor Active Mitigation Daemon...")
+    signal.signal(signal.SIGINT, cleanup_and_exit)
+    signal.signal(signal.SIGTERM, cleanup_and_exit)
+
+    logging.info(f"Starting Mystic Monitor Active Mitigation Daemon...")
+    logging.info(f"Config Mode: {config['ActiveMitigation'].get('mode', 'monitor').upper()}")
+    logging.info(f"Socket Path: {SOCKET_PATH}")
+    logging.info(f"Poll Interval: {POLL_INTERVAL}s")
+    
     try:
         with open(MODEL_PATH, "rb") as f:
             model = pickle.load(f)
     except FileNotFoundError:
-        print(f"CRITICAL: {MODEL_PATH} not found.", file=sys.stderr)
+        logging.error(f"CRITICAL: {MODEL_PATH} not found.")
         sys.exit(1)
 
     threading.Thread(target=start_socket_server, daemon=True).start()
 
-    while True:
+    while not shutdown_event.is_set():
         try:
             cpu = psutil.cpu_percent()
             memory = psutil.virtual_memory().percent
@@ -166,6 +227,8 @@ def main():
             mitigation_taken = "None"
             if prediction == 1:
                 mitigation_taken = mitigate_threat(cpu, memory)
+            else:
+                trip_tracking.clear()
 
             with state_lock:
                 app_state["timestamp"] = time.time()
@@ -176,9 +239,9 @@ def main():
                     app_state["last_action"] = mitigation_taken
 
         except Exception as e:
-            print(f"ERROR calculating state: {e}", file=sys.stderr)
+            logging.error(f"ERROR calculating state: {e}")
 
-        time.sleep(POLL_INTERVAL)
+        shutdown_event.wait(POLL_INTERVAL)
 
 if __name__ == "__main__":
     main()
