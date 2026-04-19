@@ -58,6 +58,12 @@ chmod 0660 /var/log/mystic-anomalies.log
 
 # 5. Setup Background Daemon
 echo "[4/7] Setting up background daemon in /opt/mystic_monitor..."
+
+if [ ! -f data/model.pkl ]; then
+    echo "  -> Pre-trained ML model not found. Generating an initial baseline model..."
+    bash ml/train_pipeline.sh 15
+fi
+
 mkdir -p /opt/mystic_monitor
 cp daemon/mystic_daemon.py /opt/mystic_monitor/
 cp data/model.pkl /opt/mystic_monitor/

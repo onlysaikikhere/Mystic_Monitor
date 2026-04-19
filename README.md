@@ -46,6 +46,14 @@ All aggression thresholds, ML polling loop speeds, and Whitelisted binaries are 
 ### Step 1: Global OS Installation
 Install the monitoring suite globally as root. This will install native OS dependencies (`apt`), configure the daemon inside `/etc/systemd/system/`, copy the binaries into `/usr/local/bin/`, and provision the `man` manual pages.
 
+The repository comes with a pre-trained baseline model (`data/model.pkl`) so that you can hit the ground running.
+
+*(Optional)* If you want to train a custom model mapped accurately to your exact server hardware's telemetry profile, you can execute the training pipeline wrapper:
+```bash
+bash ml/train_pipeline.sh 60
+```
+*(Note: If you delete the pre-trained model and skip this step, the installer won't crash—it will seamlessly fall back and automatically run a concise 15-second training sequence to generate a default baseline for you).*
+
 ```bash
 chmod +x install.sh
 sudo ./install.sh
@@ -98,8 +106,9 @@ The core background daemon is driven strictly by Systemd (`mystic-monitor.servic
 Rather than leaning on unreliable HTTP ports or bloated Redis stacks, inference data is transmitted over localized Unix Domain Sockets (`/run/mystic/mystic.sock`). 
 - **Dynamic `/run/` Isolation:** Systemd natively manages temporary isolated filesystems (`RuntimeDirectory=mystic`). The socket is fully ephemeral to the current server lifecycle and evaporates upon failure, completely side-stepping file-lock issues.
 
-### Privilege Segmentation
-The engine operates as a deeply privileged daemon (`root`), while UI clients can scale across unprivileged users. 
+### Privilege Segmentation & Security Posture
+The engine requires deep OS privileges and intentionally operates as a highly privileged daemon (`root`). This is required because active mitigation steps (specifically calling `renice` on arbitrary system processes, and issuing arbitrary `SIGKILL` termination signals) require total override authority over the OS kernel scheduler. 
+- **SIGKILL Authority:** By granting `root` to Mystic Monitor, you are granting it the ability to instantly terminate any process. The daemon implements strict `whitelist` parameters found in `/etc/mystic-monitor.conf` to prevent it from killing critical system infrastructure (like `sshd` or `systemd`).
 - **Group Isolation:** Access to the audit logs and IPC sockets is limited exclusively to the internal `mystic` system group ensuring that system telemetry cannot be poisoned by random user accounts. Local administrative accounts are silently bridged.
 
 ### Configurable Enforcements

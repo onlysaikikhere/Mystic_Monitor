@@ -9,4 +9,5 @@ env/
 
 # Artifact tracking
 data/data.csv
-data/model.pkl
+# Pre-trained model intentionally allowed for git tracking
+# data/model.pkl
