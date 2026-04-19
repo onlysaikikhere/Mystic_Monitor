@@ -7,7 +7,3 @@ env/
 .idea/
 .vscode/
 
-# Artifact tracking
-data/data.csv
-# Pre-trained model intentionally allowed for git tracking
-# data/model.pkl
