@@ -6,7 +6,7 @@ Unlike standard standalone python scripts, Mystic Monitor is architected to inte
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 The project is split into three distinct subsystems that cleanly separate user-space offline tasks from kernel-space live monitoring.
 
@@ -34,14 +34,14 @@ A fast, `curses`-based frontend UI explicitly designed to mimic legacy tools lik
 
 ---
 
-## ⚙️ OS Configuration (`/etc/mystic-monitor.conf`)
+## OS Configuration (`/etc/mystic-monitor.conf`)
 
 By design, System Administrators should never have to hardcode Python scripts.
 All aggression thresholds, ML polling loop speeds, and Whitelisted binaries are strictly controlled inside a standard `.ini` configuration file that the installer securely places into `/etc/mystic-monitor.conf`.
 
 ---
 
-## 🚀 Quick Start Guide
+## Quick Start Guide
 
 ### Step 1: Global OS Installation
 Install the monitoring suite globally as root. This will install native OS dependencies (`apt`), configure the daemon inside `/etc/systemd/system/`, copy the binaries into `/usr/local/bin/`, and provision the `man` manual pages.
@@ -92,7 +92,7 @@ stress --cpu 32
 
 ---
 
-## 🏛️ OS Integration & Design Rationale
+## OS Integration & Design Rationale
 
 **Mystic Monitor** implements aggressive OS-level telemetry and enforcement policies. To guarantee security, stability, and adherence to POSIX standards, several key architectural constraints are enforced:
 
@@ -115,7 +115,7 @@ The engine requires deep OS privileges and intentionally operates as a highly pr
 Configuration schemas live exclusively in `/etc/mystic-monitor.conf` limiting changes strictly to System Administrators. 
 - Policies are highly modularized, utilizing configurable `monitor`, `throttle`, and `kill` mechanisms designed to avoid spontaneous production downtime by observing processes against `consecutive_trips` and `cooldown_seconds` rules locally handled by the inference state tracking mapping.
 
-## 👥 Contributors  
+## Contributors  
 
 - **Sahishnu Kumar** — [GitHub Profile](https://github.com/onlysaikikhere) 
 - **Harsh Sumrav** — [GitHub Profile](https://github.com/Harsh-Sumrav)  
