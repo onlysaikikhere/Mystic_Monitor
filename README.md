@@ -114,3 +114,10 @@ The engine requires deep OS privileges and intentionally operates as a highly pr
 ### Configurable Enforcements
 Configuration schemas live exclusively in `/etc/mystic-monitor.conf` limiting changes strictly to System Administrators. 
 - Policies are highly modularized, utilizing configurable `monitor`, `throttle`, and `kill` mechanisms designed to avoid spontaneous production downtime by observing processes against `consecutive_trips` and `cooldown_seconds` rules locally handled by the inference state tracking mapping.
+
+## 👥 Contributors  
+
+- **Sahishnu Kumar** — [GitHub Profile](https://github.com/onlysaikikhere) 
+- **Harsh Sumrav** — [GitHub Profile](https://github.com/Harsh-Sumrav)  
+- **Pratham Mehra**   
+- **Akshitha Adusumilli**   
